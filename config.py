@@ -14,5 +14,8 @@ class Settings(BaseModel):
     live_trading: bool = os.getenv("LIVE_TRADING", "false").lower() == "true"
     fo_enabled: bool = os.getenv("FO_ENABLED", "false").lower() == "true"
     enforce_market_hours: bool = os.getenv("ENFORCE_MARKET_HOURS", "true").lower() == "true"
+    data_provider: str = os.getenv("DATA_PROVIDER", "yfinance")
+    dhan_client_id: str = os.getenv("DHAN_CLIENT_ID", "")
+    dhan_access_token: str = os.getenv("DHAN_ACCESS_TOKEN", "")
 
 settings = Settings()

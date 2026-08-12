@@ -90,6 +90,49 @@ scanned, not just the ones that clear the auto-eligibility bar. These are
 shape-based heuristics on swing points, not a substitute for a proper
 charting library - noisy intraday data will produce false positives.
 
+## Live data & broker integration (Dhan)
+`data/dhan_data.py` and `execution/dhan_broker.py` integrate the official
+[`dhanhq`](https://pypi.org/project/dhanhq/) Python SDK for DhanHQ v2 as an
+alternative to the default `yfinance` feed / `PaperBroker`.
+
+**Credentials:** get a `client-id` and `access-token` from
+web.dhan.co -> My Profile -> DhanHQ Trading APIs, then put them in your
+local `.env` as `DHAN_CLIENT_ID` / `DHAN_ACCESS_TOKEN` (see
+`.env.example`). Never paste real API credentials into a chat session or
+commit them - `.env` is gitignored for this reason.
+
+**What's verified vs. what needs your own testing:** the request contract
+here (endpoint paths, payload field names, response envelope shape) was
+read directly from the `dhanhq` package's own source, not guessed. What
+could *not* be verified in the environment this was built in: the exact
+field names inside a successful historical-data response's `data` payload
+(assumed to be parallel `open`/`high`/`low`/`close`/`volume`/`timestamp`
+arrays per DhanHQ's documented schema), and the scrip-master CSV's column
+names for resolving a trading symbol to Dhan's numeric `security_id`. Both
+outbound `*.dhan.co` access and the CSV at `images.dhan.co` were blocked in
+that sandbox, the same way Yahoo Finance was - there was no way to make a
+live call and confirm the response shape byte-for-byte. `_parse_candles` in
+`data/dhan_data.py` validates the expected keys explicitly and raises a
+clear error naming the keys actually received if they don't match, rather
+than silently mismapping data - if you hit that error, adjust the key names
+there to match what Dhan actually returns.
+
+**Security IDs:** Dhan identifies instruments by a numeric `security_id`,
+not a ticker string. `DhanBroker` takes an explicit
+`symbol_to_security_id` map at construction (e.g.
+`{"RELIANCE.NS": "2885"}`) rather than attempting to auto-resolve it - get
+the real IDs from Dhan's scrip-master CSV or your Dhan account, since
+guessing them would risk silently routing an order to the wrong instrument.
+
+**Wiring it in:** `main.py` still defaults to `yfinance`/`PaperBroker`.
+To use Dhan instead, swap the `get_ohlcv` calls for `get_ohlcv_dhan(...)`
+(note its signature differs - it takes `security_id`/`exchange_segment`
+instead of a ticker string, and `from_date`/`to_date` instead of
+yfinance's `period`) and construct `DhanBroker(settings.dhan_client_id,
+settings.dhan_access_token, symbol_to_security_id={...})` in place of
+`PaperBroker()`. `execution/order_manager.py`'s checks apply identically
+either way.
+
 ## Risk management
 - Max 1-2% risk per trade (`RISK_PER_TRADE`)
 - Max 2% daily loss (`MAX_DAILY_LOSS`)
@@ -168,7 +211,10 @@ pytest -q
 5. Add walk-forward and out-of-sample testing; the current backtester is in-sample only.
 6. Add persistent trade database.
 7. Add authentication and secrets management.
-8. Implement the selected broker's current API contract (health check is currently a stub).
+8. Verify the Dhan historical-data response schema and scrip-master CSV columns against
+   a live call (see "Live data & broker integration" above), then wire `main.py` to use
+   `data/dhan_data.py` / `execution/dhan_broker.py` instead of the yfinance/PaperBroker
+   defaults.
 9. Add order reconciliation and kill-switch.
 10. Add a proper NSE trading-calendar/holiday check (current market-hours check is
     day-of-week + time-of-day only).

@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 
 class Broker(ABC):
     @abstractmethod
-    def place_order(self, symbol, side, quantity, order_type="MARKET"):
+    def place_order(self, symbol, side, quantity, order_type="MARKET", price=0.0):
         raise NotImplementedError
 
     @abstractmethod
@@ -18,7 +18,7 @@ class PaperBroker(Broker):
         self.orders = []
         self.counter = 0
 
-    def place_order(self, symbol, side, quantity, order_type="MARKET"):
+    def place_order(self, symbol, side, quantity, order_type="MARKET", price=0.0):
         self.counter += 1
         order = {
             "order_id": f"PAPER-{self.counter}",
@@ -26,6 +26,7 @@ class PaperBroker(Broker):
             "side": side,
             "quantity": quantity,
             "type": order_type,
+            "price": price,
             "status": "PAPER_ACCEPTED",
         }
         self.orders.append(order)

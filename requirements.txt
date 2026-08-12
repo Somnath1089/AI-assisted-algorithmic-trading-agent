@@ -1,6 +1,7 @@
 pandas>=2.2
 numpy>=1.26
 yfinance>=0.2.40
+dhanhq>=2.0
 python-dotenv>=1.0
 pydantic>=2.7
 requests>=2.32

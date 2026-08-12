@@ -52,7 +52,7 @@ class OrderManager:
         if not self.broker.health_check():
             return False, "Broker/API health check failed", None
 
-        order = self.broker.place_order(signal.symbol, signal.side, quantity)
+        order = self.broker.place_order(signal.symbol, signal.side, quantity, price=signal.entry)
         self._submitted_today.add(key)
         self.risk_manager.add_open_risk(open_risk_amount)
         return True, "All checks passed", order
