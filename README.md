@@ -69,6 +69,27 @@ setups need an unusually strong confluence to clear the bar. If Target 1
 would be capped by a nearer support/resistance level before reaching 1.5R,
 the setup is dropped entirely.
 
+## Chart pattern reader
+`indicators/chart_patterns.py` detects, from raw OHLC bars alone (no
+external TA library):
+- Candlestick patterns on the primary timeframe: bullish/bearish engulfing,
+  hammer, shooting star, doji, morning star, evening star.
+- Structural patterns on the higher timeframe via swing-high/low detection:
+  double top/bottom (confirmed once price closes through the neckline, or
+  flagged `_FORMING` before that) and head-and-shoulders / inverse
+  head-and-shoulders.
+
+The signal engine folds a matching pattern into the Price Action score
+component (capped at its existing 15-point weight, not an extra category)
+and surfaces a conflicting pattern as a caution note instead of a bonus -
+this is the "detect conflicting evidence" behavior called for in the AI
+role section of `AI_SYSTEM_PROMPT.md`. Every `Signal` also carries a plain
+`decision` (`BUY`/`SELL`), the detected `pattern` name, and its `pattern_bias`,
+and `main.py` prints a `BUY`/`SELL`/`AVOID` summary line for every symbol
+scanned, not just the ones that clear the auto-eligibility bar. These are
+shape-based heuristics on swing points, not a substitute for a proper
+charting library - noisy intraday data will produce false positives.
+
 ## Risk management
 - Max 1-2% risk per trade (`RISK_PER_TRADE`)
 - Max 2% daily loss (`MAX_DAILY_LOSS`)

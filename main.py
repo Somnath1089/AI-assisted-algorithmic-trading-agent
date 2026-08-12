@@ -55,6 +55,7 @@ def scan(mode="INTRADAY"):
     tracker = PaperTradeTracker()
 
     candidates = []
+    summary = []
 
     for symbol in UNIVERSE:
         try:
@@ -80,26 +81,42 @@ def scan(mode="INTRADAY"):
 
             if signal:
                 candidates.append(signal)
+                summary.append((symbol, signal.decision, f"{signal.score} ({signal.grade})", signal.pattern or "-"))
+            else:
+                summary.append((symbol, "AVOID", "-", "-"))
 
         except Exception as exc:
+            summary.append((symbol, "AVOID", "error", "-"))
             print(f"{symbol}: data/strategy error: {exc}")
+
+    print(f"\n{'SYMBOL':<16}{'DECISION':<10}{'SCORE':<14}{'PATTERN':<24}")
+    for symbol, decision, score_label, pattern in summary:
+        print(f"{symbol:<16}{decision:<10}{score_label:<14}{pattern:<24}")
 
     candidates.sort(key=lambda s: s.score, reverse=True)
 
     if not candidates:
-        print("NO SAFE TRADE TODAY")
+        print("\nNO SAFE TRADE TODAY")
         return
 
     for signal in candidates[:5]:
         qty = risk.position_size(signal.entry, signal.stop_loss)
+        exit_plan = (
+            f"Book at Target 1 ({round(signal.target1, 2)}); trail remainder to Target 2 "
+            f"({round(signal.target2, 2)}). Exit immediately on Stop Loss "
+            f"({round(signal.stop_loss, 2)}) or if: {signal.invalidation}"
+        )
 
         print("\nStock Name:", signal.symbol)
+        print("Signal:", f"{signal.decision} ({signal.side})")
         print("Trade Type:", signal.side)
         print("Signal Score:", f"{signal.score}/100 ({signal.grade})")
+        print("Chart Pattern:", f"{signal.pattern or 'None'} ({signal.pattern_bias})")
         print("Entry Price:", round(signal.entry, 2))
         print("Stop Loss:", round(signal.stop_loss, 2))
         print("Target 1:", round(signal.target1, 2))
         print("Target 2:", round(signal.target2, 2))
+        print("Exit Plan:", exit_plan)
         print("Risk/Reward:", f"1:{signal.risk_reward}")
         print("Position Size:", qty)
         print("Risk Level:", risk_level(signal.grade))

@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 import pandas as pd
 
+from indicators.chart_patterns import read_chart
+
 W_TREND = 20
 W_PRICE_ACTION = 15
 W_VOLUME = 15
@@ -26,6 +28,9 @@ class Signal:
     market_context: str
     sector_context: str
     invalidation: str
+    decision: str = ""
+    pattern: str = ""
+    pattern_bias: str = "NEUTRAL"
 
 def classify(score):
     if score >= 85:
@@ -53,20 +58,31 @@ def _trend_score(last, side, higher_tf_aligned):
         score += 5; reasons.append("Higher-timeframe trend aligned")
     return min(score, W_TREND), reasons
 
-def _price_action_score(last, side):
+def _price_action_score(last, side, pattern_name=None, pattern_bias="NEUTRAL"):
     bullish_candle = last["Close"] > last["Open"]
     bearish_candle = last["Close"] < last["Open"]
+    score = 0
+    reasons = []
+
     if side == "LONG":
         if bool(last.get("BREAKOUT", False)) and bullish_candle:
-            return 15, ["Confirmed breakout with bullish candle close"]
-        if bullish_candle and last["Close"] > last["EMA20"]:
-            return 8, ["Bullish price action above EMA20"]
+            score, reasons = 15, ["Confirmed breakout with bullish candle close"]
+        elif bullish_candle and last["Close"] > last["EMA20"]:
+            score, reasons = 8, ["Bullish price action above EMA20"]
     else:
         if bool(last.get("BREAKDOWN", False)) and bearish_candle:
-            return 15, ["Confirmed breakdown with bearish candle close"]
-        if bearish_candle and last["Close"] < last["EMA20"]:
-            return 8, ["Bearish price action below EMA20"]
-    return 0, []
+            score, reasons = 15, ["Confirmed breakdown with bearish candle close"]
+        elif bearish_candle and last["Close"] < last["EMA20"]:
+            score, reasons = 8, ["Bearish price action below EMA20"]
+
+    side_bias = "BULLISH" if side == "LONG" else "BEARISH"
+    if pattern_name and pattern_bias == side_bias:
+        score = min(W_PRICE_ACTION, score + 4)
+        reasons.append(f"Chart pattern confirms setup: {pattern_name}")
+    elif pattern_name and pattern_bias != "NEUTRAL" and pattern_bias != side_bias:
+        reasons.append(f"Chart pattern conflicts with setup: {pattern_name} - caution")
+
+    return score, reasons
 
 def _volume_score(last):
     ratio = last["VOLUME_RATIO"]
@@ -137,6 +153,14 @@ def generate_signal(symbol, df, higher_tf_df, regime,
         higher_aligned_long = h_last["Close"] > h_last["EMA20"]
         higher_aligned_short = h_last["Close"] < h_last["EMA20"]
 
+    chart_read = read_chart(df, higher_tf_df)
+    pattern_name = chart_read["chart_pattern"] or chart_read["candle_pattern"] or ""
+    pattern_bias = chart_read["overall_bias"]
+    conflicting_evidence = (
+        chart_read["chart_pattern"] and chart_read["candle_pattern"]
+        and chart_read["chart_bias"] != chart_read["candle_bias"]
+    )
+
     for side, higher_aligned in (("LONG", higher_aligned_long), ("SHORT", higher_aligned_short)):
         entry = float(last["Close"])
         atr = float(last["ATR14"])
@@ -169,7 +193,7 @@ def generate_signal(symbol, df, higher_tf_df, regime,
         total = 0
 
         s, r = _trend_score(last, side, higher_aligned); total += s; reasons += r
-        s, r = _price_action_score(last, side); total += s; reasons += r
+        s, r = _price_action_score(last, side, pattern_name, pattern_bias); total += s; reasons += r
         s, r = _volume_score(last); total += s; reasons += r
         s, dampen, r = _regime_score(regime, side); total += s; reasons += r
         s, r = _sector_score(sector_score_10, sector_reason); total += s; reasons += r
@@ -178,6 +202,12 @@ def generate_signal(symbol, df, higher_tf_df, regime,
         s, r = _fundamentals_score(fundamental_score_10); total += s; reasons += r
         total += W_RISK_REWARD
         reasons.append("Target 1 achievable at 1.5R without structural obstruction")
+
+        if conflicting_evidence:
+            reasons.append(
+                f"Conflicting evidence: {chart_read['chart_pattern']} ({chart_read['chart_bias']}) "
+                f"vs {chart_read['candle_pattern']} ({chart_read['candle_bias']})"
+            )
 
         if dampen:
             total *= 0.5
@@ -199,6 +229,8 @@ def generate_signal(symbol, df, higher_tf_df, regime,
             risk_reward=1.5, reasons=reasons,
             market_context=regime, sector_context=sector_reason,
             invalidation=invalidation,
+            decision="BUY" if side == "LONG" else "SELL",
+            pattern=pattern_name, pattern_bias=pattern_bias,
         ))
 
     if not candidates:
