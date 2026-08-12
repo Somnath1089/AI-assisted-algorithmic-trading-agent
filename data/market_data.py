@@ -21,3 +21,10 @@ def get_ohlcv(symbol: str, period="6mo", interval="5m") -> pd.DataFrame:
         raise ValueError(f"Missing columns: {missing}")
 
     return df[required].dropna()
+
+def get_stock_info(symbol: str) -> dict:
+    try:
+        info = yf.Ticker(symbol).info
+        return info if isinstance(info, dict) else {}
+    except Exception:
+        return {}

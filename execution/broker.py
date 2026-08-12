@@ -9,6 +9,10 @@ class Broker(ABC):
     def cancel_order(self, order_id):
         raise NotImplementedError
 
+    @abstractmethod
+    def health_check(self):
+        raise NotImplementedError
+
 class PaperBroker(Broker):
     def __init__(self):
         self.orders = []
@@ -33,3 +37,6 @@ class PaperBroker(Broker):
                 order["status"] = "CANCELLED"
                 return order
         return None
+
+    def health_check(self):
+        return True

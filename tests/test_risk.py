@@ -20,3 +20,12 @@ def test_max_daily_loss():
     ok, reason = rm.can_trade()
     assert not ok
     assert "daily loss" in reason.lower()
+
+def test_open_risk_limit():
+    rm = RiskManager(100000, 0.01, 0.02, 3, max_open_risk=0.02)
+    assert rm.can_add_open_risk(1500)
+    rm.add_open_risk(1500)
+    assert not rm.can_add_open_risk(600)
+    assert rm.can_add_open_risk(500)
+    rm.release_open_risk(1500)
+    assert rm.can_add_open_risk(1900)
