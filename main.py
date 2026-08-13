@@ -1,5 +1,5 @@
 from config import settings
-from data.market_data import get_ohlcv, get_stock_info
+from data.market_data import get_ohlcv as default_get_ohlcv, get_stock_info as default_get_stock_info
 from indicators.technical import add_indicators
 from indicators.market_regime import market_regime
 from fundamentals.fundamental_filter import fundamental_score
@@ -28,20 +28,38 @@ RISK_LEVEL_BY_GRADE = {"A+": "Low", "A": "Moderate", "B": "Elevated"}
 def risk_level(grade):
     return RISK_LEVEL_BY_GRADE.get(grade, "High")
 
-def scan(mode="INTRADAY"):
-    nifty = add_indicators(get_ohlcv("^NSEI", period="1mo", interval="5m"))
-    regime = market_regime(nifty)
+def run_scan(mode="INTRADAY", get_ohlcv=None, get_stock_info=None, broker=None):
+    """Run one full scan and return a structured result - no printing here,
+    so this can drive the CLI, a dashboard, or a test equally. get_ohlcv /
+    get_stock_info / broker are injectable so callers can swap in a live
+    provider (Dhan), a fake, or synthetic data without touching this logic."""
+    get_ohlcv = get_ohlcv or default_get_ohlcv
+    get_stock_info = get_stock_info or default_get_stock_info
 
-    print("=" * 70)
-    print("AI TRADING ALGORITHM AGENT - NSE CASH EQUITY")
-    print(f"Mode: {mode} | F&O Enabled: {settings.fo_enabled}")
-    print("NIFTY REGIME:", regime)
-    print("=" * 70)
+    result = {
+        "mode": mode,
+        "fo_enabled": settings.fo_enabled,
+        "regime": None,
+        "blocked_reason": None,
+        "summary": [],
+        "signals": [],
+        "orders": [],
+        "risk_snapshot": None,
+        "errors": [],
+    }
+
+    try:
+        nifty = add_indicators(get_ohlcv("^NSEI", period="1mo", interval="5m"))
+        regime = market_regime(nifty)
+    except Exception as exc:
+        result["blocked_reason"] = f"NIFTY market data unavailable: {exc}"
+        return result
+
+    result["regime"] = regime
 
     if regime in ("UNCERTAIN", "HIGH VOLATILITY"):
-        print("NO SAFE TRADE TODAY")
-        print(f"Reason: Market regime is {regime}; capital preservation takes priority.")
-        return
+        result["blocked_reason"] = f"Market regime is {regime}; capital preservation takes priority."
+        return result
 
     risk = RiskManager(
         settings.capital,
@@ -50,12 +68,11 @@ def scan(mode="INTRADAY"):
         settings.max_trades_per_day,
         settings.max_open_risk,
     )
-    broker = PaperBroker()
+    broker = broker or PaperBroker()
     order_manager = OrderManager(broker, risk)
     tracker = PaperTradeTracker()
 
     candidates = []
-    summary = []
 
     for symbol in UNIVERSE:
         try:
@@ -81,31 +98,79 @@ def scan(mode="INTRADAY"):
 
             if signal:
                 candidates.append(signal)
-                summary.append((symbol, signal.decision, f"{signal.score} ({signal.grade})", signal.pattern or "-"))
+                result["summary"].append((symbol, signal.decision, f"{signal.score} ({signal.grade})", signal.pattern or "-"))
             else:
-                summary.append((symbol, "AVOID", "-", "-"))
+                result["summary"].append((symbol, "AVOID", "-", "-"))
 
         except Exception as exc:
-            summary.append((symbol, "AVOID", "error", "-"))
-            print(f"{symbol}: data/strategy error: {exc}")
-
-    print(f"\n{'SYMBOL':<16}{'DECISION':<10}{'SCORE':<14}{'PATTERN':<24}")
-    for symbol, decision, score_label, pattern in summary:
-        print(f"{symbol:<16}{decision:<10}{score_label:<14}{pattern:<24}")
+            result["summary"].append((symbol, "AVOID", "error", "-"))
+            result["errors"].append((symbol, str(exc)))
 
     candidates.sort(key=lambda s: s.score, reverse=True)
+    result["signals"] = candidates[:5]
 
-    if not candidates:
+    for signal in result["signals"]:
+        qty = risk.position_size(signal.entry, signal.stop_loss)
+        order_entry = {"signal": signal, "quantity": qty, "allowed": False, "reason": None, "order": None}
+
+        if signal.score < settings.min_signal_score:
+            order_entry["reason"] = "WATCHLIST ONLY (below auto-eligibility threshold)"
+        else:
+            record = tracker.record_signal(signal)
+            allowed, reason, order = order_manager.submit(
+                signal, qty, allow_after_hours=not settings.enforce_market_hours
+            )
+            order_entry["allowed"] = allowed
+            order_entry["reason"] = reason
+            order_entry["order"] = order
+            if allowed:
+                tracker.record_execution(record, signal.entry)
+
+        result["orders"].append(order_entry)
+
+    result["risk_snapshot"] = {
+        "capital": risk.capital,
+        "daily_pnl": risk.daily_pnl,
+        "trade_count": risk.trade_count,
+        "max_trades": risk.max_trades,
+        "open_risk": risk.open_risk,
+        "max_open_risk_amount": risk.max_open_risk_amount,
+    }
+
+    return result
+
+def _exit_plan(signal):
+    return (
+        f"Book at Target 1 ({round(signal.target1, 2)}); trail remainder to Target 2 "
+        f"({round(signal.target2, 2)}). Exit immediately on Stop Loss "
+        f"({round(signal.stop_loss, 2)}) or if: {signal.invalidation}"
+    )
+
+def _print_report(result):
+    print("=" * 70)
+    print("AI TRADING ALGORITHM AGENT - NSE CASH EQUITY")
+    print(f"Mode: {result['mode']} | F&O Enabled: {result['fo_enabled']}")
+    print("NIFTY REGIME:", result["regime"] or "UNKNOWN")
+    print("=" * 70)
+
+    for symbol, error in result["errors"]:
+        print(f"{symbol}: data/strategy error: {error}")
+
+    if result["blocked_reason"]:
+        print("NO SAFE TRADE TODAY")
+        print(f"Reason: {result['blocked_reason']}")
+        return
+
+    print(f"\n{'SYMBOL':<16}{'DECISION':<10}{'SCORE':<14}{'PATTERN':<24}")
+    for symbol, decision, score_label, pattern in result["summary"]:
+        print(f"{symbol:<16}{decision:<10}{score_label:<14}{pattern:<24}")
+
+    if not result["signals"]:
         print("\nNO SAFE TRADE TODAY")
         return
 
-    for signal in candidates[:5]:
-        qty = risk.position_size(signal.entry, signal.stop_loss)
-        exit_plan = (
-            f"Book at Target 1 ({round(signal.target1, 2)}); trail remainder to Target 2 "
-            f"({round(signal.target2, 2)}). Exit immediately on Stop Loss "
-            f"({round(signal.stop_loss, 2)}) or if: {signal.invalidation}"
-        )
+    for order_entry in result["orders"]:
+        signal = order_entry["signal"]
 
         print("\nStock Name:", signal.symbol)
         print("Signal:", f"{signal.decision} ({signal.side})")
@@ -116,9 +181,9 @@ def scan(mode="INTRADAY"):
         print("Stop Loss:", round(signal.stop_loss, 2))
         print("Target 1:", round(signal.target1, 2))
         print("Target 2:", round(signal.target2, 2))
-        print("Exit Plan:", exit_plan)
+        print("Exit Plan:", _exit_plan(signal))
         print("Risk/Reward:", f"1:{signal.risk_reward}")
-        print("Position Size:", qty)
+        print("Position Size:", order_entry["quantity"])
         print("Risk Level:", risk_level(signal.grade))
         print("Reason:", "; ".join(signal.reasons))
         print("Market Context:", signal.market_context)
@@ -126,19 +191,17 @@ def scan(mode="INTRADAY"):
         print("Invalidation:", signal.invalidation)
         print("Confidence:", signal.grade)
 
-        if signal.score < settings.min_signal_score:
-            print("-> WATCHLIST ONLY (below auto-eligibility threshold)")
-            continue
-
-        record = tracker.record_signal(signal)
-        allowed, reason, order = order_manager.submit(
-            signal, qty, allow_after_hours=not settings.enforce_market_hours
-        )
-        if allowed:
-            tracker.record_execution(record, signal.entry)
-            print("PAPER ORDER:", order)
+        if order_entry["allowed"]:
+            print("PAPER ORDER:", order_entry["order"])
+        elif order_entry["order"] is None and order_entry["reason"] and "WATCHLIST" in order_entry["reason"]:
+            print("->", order_entry["reason"])
         else:
-            print("ORDER BLOCKED:", reason)
+            print("ORDER BLOCKED:", order_entry["reason"])
+
+def scan(mode="INTRADAY"):
+    result = run_scan(mode=mode)
+    _print_report(result)
+    return result
 
 if __name__ == "__main__":
     scan()

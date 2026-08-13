@@ -196,6 +196,24 @@ until the complete system has been validated.
 python main.py
 ```
 
+## Dashboard
+`dashboard/generate.py` renders a `main.run_scan()` result into a single
+self-contained HTML report - scan summary table, a stat row (signals found,
+orders placed, open-risk utilization, capital/P&L), and a detail card per
+BUY/SELL candidate with its full price ladder, chart pattern, reasons, and
+order-manager outcome. No server, no JS framework, no network request at
+render time (fonts are embedded in `dashboard/fonts.py`).
+
+```
+python -m dashboard.generate                # live data, writes dashboard.html
+python -m dashboard.generate --demo          # synthetic demo data - no live feed required
+python -m dashboard.generate --output out.html --mode SWING
+```
+
+Open the resulting HTML file in a browser. `--demo` is useful for previewing
+the dashboard (or developing on it) without a live data connection; it's
+never used by `main.py`'s real scan path, only by the CLI's `--demo` flag.
+
 ## Tests
 
 ```
