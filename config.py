@@ -18,4 +18,13 @@ class Settings(BaseModel):
     dhan_client_id: str = os.getenv("DHAN_CLIENT_ID", "")
     dhan_access_token: str = os.getenv("DHAN_ACCESS_TOKEN", "")
 
+    # F&O is a leveraged, lot-based instrument class with no safe default
+    # lot size or expiry (see fno/instruments.py) - both must be supplied
+    # explicitly and verified against the current NSE F&O circular. Left
+    # unset (empty string), main.py skips the F&O leg even if FO_ENABLED
+    # is true, rather than guess.
+    fno_lot_size: str = os.getenv("FNO_LOT_SIZE", "")
+    fno_expiry: str = os.getenv("FNO_EXPIRY", "")  # YYYY-MM-DD
+    fno_margin_pct: float = float(os.getenv("FNO_MARGIN_PCT", "0.12"))
+
 settings = Settings()

@@ -147,6 +147,51 @@ check, duplicate-order check, market-hours check (NSE 09:15-15:30 IST,
 Mon-Fri), stop-loss sanity check, and a broker health check. Any failed check
 blocks the order - the AI layer has no path around this gate.
 
+## F&O (futures & options)
+Off by default (`FO_ENABLED=false`), per "Default mode = CASH EQUITY ONLY"
+in `AI_SYSTEM_PROMPT.md`. F&O is mechanically different enough from cash
+equity - leverage, fixed lot sizes instead of whole shares, contract expiry,
+margin instead of full notional capital - that it gets its own subsystem
+(`fno/`) rather than a flag bolted onto the cash-equity path:
+
+- `fno/instruments.py` - `FnoInstrument` (symbol, underlying, lot size,
+  expiry, and for options a strike/CE-PE). `lot_size` and `expiry` are
+  **required constructor arguments with no default**. NSE lot sizes are
+  revised periodically via exchange circular; when this was built, a web
+  search for the current NIFTY lot size returned conflicting figures (65 vs
+  75) and the source sites were unreachable to verify directly. Hardcoding
+  either would have silently corrupted every position-sizing and margin
+  calculation downstream, so it isn't hardcoded anywhere - **you must set
+  `FNO_LOT_SIZE` and `FNO_EXPIRY` in `.env` yourself, verified against the
+  current NSE F&O circular or your broker's contract master**, before F&O
+  does anything. With `FO_ENABLED=true` and either left blank, `main.py`
+  prints a clear "F&O enabled but not configured" status instead of
+  guessing or silently skipping.
+- `fno/risk.py` - `FnoRiskManager` tracks two separate things that a naive
+  implementation conflates: **margin** (capital the exchange blocks to hold
+  a leveraged position) and **notional risk** (what a stop-out actually
+  costs - the full price move times lot size times lots, usually many times
+  the margin paid). Both are capped independently; margin against
+  `capital`, notional risk against `MAX_OPEN_RISK` same as cash equity.
+- `fno/order_manager.py` - `FnoOrderManager` runs the same
+  every-check-or-no-order discipline as `execution/order_manager.py`, plus
+  what's specific to F&O: a lot-size check, a margin check (not a capital
+  check), and an expiry check that blocks both expired contracts and ones
+  expiring within a configurable window (`near_expiry_days`, default 2) -
+  rollover volatility/liquidity near expiry is a real, F&O-specific risk
+  the cash-equity path doesn't have.
+- `fno/scan.py` - `run_fno_scan()` reuses the exact same technical/pattern
+  scoring engine (`strategies/signal_engine.py`) that cash equity uses -
+  the signal-scoring logic doesn't care whether the price series behind it
+  is a stock or a futures contract. Fundamentals/sector strength are
+  neutral for index derivatives (there's no promoter holding or earnings
+  growth for an index).
+
+`main.py`'s `UNIVERSE` also gained `NIFTYBEES.NS` - a real NSE-listed Nifty
+50 index ETF, which is how NIFTY exposure works in cash equity (you can't
+buy the index itself). The leveraged route is the F&O leg above
+(`fno.instruments.nifty_futures`).
+
 ## Backtesting
 `backtest/engine.py` runs a simple long-only backtest with slippage and
 brokerage/tax deductions; `backtest/metrics.py` reports win rate, average
@@ -236,6 +281,10 @@ pytest -q
 9. Add order reconciliation and kill-switch.
 10. Add a proper NSE trading-calendar/holiday check (current market-hours check is
     day-of-week + time-of-day only).
-11. Validate current Indian algo-trading/broker/exchange requirements before live deployment.
+11. Verify `FNO_LOT_SIZE` against the current NSE F&O circular before setting it -
+    do not reuse an old value, lot sizes are revised periodically.
+12. Replace `fno/risk.py`'s flat `margin_pct` approximation with a real SPAN+exposure
+    margin figure from the broker's live margin API before sizing real F&O positions.
+13. Validate current Indian algo-trading/broker/exchange requirements before live deployment.
 
 Historical backtest results do not guarantee future returns.
