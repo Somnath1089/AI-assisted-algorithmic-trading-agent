@@ -285,6 +285,13 @@ pytest -q
     do not reuse an old value, lot sizes are revised periodically.
 12. Replace `fno/risk.py`'s flat `margin_pct` approximation with a real SPAN+exposure
     margin figure from the broker's live margin API before sizing real F&O positions.
-13. Validate current Indian algo-trading/broker/exchange requirements before live deployment.
+13. SEBI algo-trading compliance: per a secondary source (a Groww blog post, not the
+    primary SEBI circular - verify directly against SEBI before relying on this),
+    2025-era norms require retail algo systems to be tagged with a broker-registered
+    algo ID, all orders routed through an approved broker's tagging/approval flow
+    (not placed directly against a raw exchange API), and in some cases the strategy
+    logic disclosed to the broker. Nothing in this codebase currently implements
+    algo registration/tagging - required before any live (non-paper) deployment in India.
+14. Validate current Indian algo-trading/broker/exchange requirements before live deployment.
 
 Historical backtest results do not guarantee future returns.
